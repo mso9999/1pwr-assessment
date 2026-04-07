@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, Cell } from "recharts";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, Cell, LineChart, Line, CartesianGrid } from "recharts";
 import _ from "lodash";
 
 // ═══════════════════════════════════════════════════════════════
@@ -317,7 +317,7 @@ const Q = [
   ["quantitative", 1, "If a minigrid serves 200 households and each pays $5/month, what is the monthly revenue?", ["$500", "$1,000", "$5,000", "$10,000"], 1, "200 × $5 = $1,000/month."],
   ["quantitative", 2, "Electricity consumption grows 8% per year. In how many years does it double?", ["About 5 years", "About 9 years", "About 12 years", "About 15 years"], 1, "Rule of 72: 72/8 = 9 years to double."],
   ["quantitative", 3, "A 100kWp solar array produces 450 kWh/day. The system has 10% losses and 15% battery round-trip losses. How much usable energy reaches customers?", ["~344 kWh", "~450 kWh", "~405 kWh", "~382 kWh"], 0, "450 × 0.90 (system losses) × 0.85 (battery losses) ≈ 344 kWh. In practice not all energy goes through batteries, but this bounds the worst case."],
-  ["quantitative", 4, "Your minigrid has a $500,000 capex, $3,000/month opex, and 300 customers averaging $8/month. Ignoring time value, what is the simple payback period?", ["About 35 years", "About 69 months (5.75 years) — wait, let me recalculate", "Never pays back", "About 42 months"], 0, "Monthly net = $2,400 - $3,000 = -$600. Revenue doesn't cover opex. At $8/customer/month, 300 customers = $2,400. This doesn't pay back — trick question. But the expected answer is likely with the corrected ARPU... Actually with these numbers it never pays back. The correct answer is 'Never pays back.'"],
+  ["quantitative", 4, "Your minigrid has a $500,000 capex, $3,000/month opex, and 300 customers averaging $8/month. Ignoring time value, what is the simple payback period?", ["About 35 years", "About 69 months (5.75 years)", "Never pays back", "About 42 months"], 2, "Monthly revenue = 300 × $8 = $2,400, which is below $3,000/month opex, so operating cash flow is negative every month. Simple payback never arrives on that basis (you would need higher ARPU, lower opex, or other income before capex can be recovered)."],
   ["quantitative", 4, "A 50kWp system in Maseru (PSH=5.5) with 85% performance ratio generates annual energy of approximately:", ["96 MWh", "86 MWh", "100 MWh", "75 MWh"], 1, "50 × 5.5 × 0.85 × 365 = 85,494 kWh ≈ 85.5 MWh/year."],
   ["quantitative", 5, "You're modeling a minigrid with stochastic demand. Daily consumption follows a lognormal distribution with μ=6.2 and σ=0.4 (in log-kWh). What is the probability demand exceeds 700 kWh on any given day?", ["About 5%", "About 16%", "About 25%", "About 50%"], 1, "Median = e^6.2 ≈ 493 kWh. ln(700) ≈ 6.55. Z = (6.55-6.2)/0.4 = 0.875. P(Z>0.875) ≈ 19%. Closest is ~16% (one σ approximation), though exact answer is ~19%."],
 
@@ -439,6 +439,9 @@ function createInitialState() {
     totalQuestions: 0,
     sessionStartTime: Date.now(),
     sessions: [{ start: Date.now(), questions: 0 }],
+    sessionHistory: [],
+    bookmarks: [],
+    shuffleMode: false,
   };
 }
 
@@ -448,8 +451,16 @@ function getAvailableQuestions(domain, difficulty, seen) {
 
 function qId(q) { return `${q[0]}_${q[1]}_${q[2].substring(0, 40)}`; }
 
-function selectNextQuestion(state, selectedDomain = null) {
-  const domains = selectedDomain ? [selectedDomain] : Object.keys(DOMAINS);
+function countQuestionsInDomain(domain) {
+  return Q.filter(q => q[0] === domain).length;
+}
+
+function selectNextQuestion(state, selectedDomain = null, excludeDomain = null) {
+  let domains = selectedDomain ? [selectedDomain] : Object.keys(DOMAINS);
+  if (excludeDomain && !selectedDomain) {
+    const filtered = domains.filter((d) => d !== excludeDomain);
+    domains = filtered.length > 0 ? filtered : Object.keys(DOMAINS);
+  }
 
   // Prioritize domains with fewer attempts
   const sorted = [...domains].sort((a, b) => {
@@ -474,7 +485,55 @@ function selectNextQuestion(state, selectedDomain = null) {
   return null;
 }
 
-function updateState(state, questionData, correct) {
+/** Weighted random domain: favors untested and low-ability domains when shuffleMode is on. */
+function pickWeightedDomain(state, excludeDomain = null) {
+  const keys = Object.keys(DOMAINS).filter((k) => !excludeDomain || k !== excludeDomain);
+  if (keys.length === 0) return Object.keys(DOMAINS)[0];
+  const weights = keys.map((k) => {
+    const ds = state.domainStates[k];
+    let w = 1;
+    if (ds.totalAttempted === 0) w += 8;
+    else if (ds.estimatedAbility != null && ds.estimatedAbility < 2.5) w += 5;
+    else if (ds.estimatedAbility != null && ds.estimatedAbility < 3.5) w += 2;
+    if (ds.totalAttempted > 0 && ds.totalCorrect / ds.totalAttempted < 0.5) w += 2;
+    return w;
+  });
+  const sum = weights.reduce((a, b) => a + b, 0);
+  let r = Math.random() * sum;
+  for (let i = 0; i < keys.length; i++) {
+    r -= weights[i];
+    if (r <= 0) return keys[i];
+  }
+  return keys[keys.length - 1];
+}
+
+function selectNextQuestionShuffled(state, excludeDomain = null) {
+  const allKeys = Object.keys(DOMAINS);
+  const order = _.shuffle([...allKeys]);
+  const first = pickWeightedDomain(state, excludeDomain);
+  const rotated = [first, ...order.filter((k) => k !== first)];
+  for (const domain of rotated) {
+    const ds = state.domainStates[domain];
+    const diff = ds.currentDifficulty;
+    for (const tryDiff of [diff, diff - 1, diff + 1, diff - 2, diff + 2].filter(d => d >= 1 && d <= 5)) {
+      const available = getAvailableQuestions(domain, tryDiff, state.questionsSeen);
+      if (available.length > 0) {
+        const q = available[Math.floor(Math.random() * available.length)];
+        return { question: q, domain, difficulty: tryDiff };
+      }
+    }
+  }
+  return null;
+}
+
+function selectNextQuestionForState(state, selectedDomain = null, excludeDomain = null) {
+  if (!selectedDomain && state.shuffleMode) {
+    return selectNextQuestionShuffled(state, excludeDomain);
+  }
+  return selectNextQuestion(state, selectedDomain, excludeDomain);
+}
+
+function updateState(state, questionData, correct, selectedIndex = null) {
   const { domain, difficulty, question } = questionData;
   const ds = { ...state.domainStates[domain] };
 
@@ -506,11 +565,46 @@ function updateState(state, questionData, correct) {
   const newSeen = new Set(state.questionsSeen);
   newSeen.add(qId(question));
 
+  const histEntry = {
+    domain,
+    difficulty,
+    questionText: question[2],
+    options: question[3],
+    correctIndex: question[4],
+    selectedIndex: selectedIndex,
+    correct,
+    skipped: false,
+    timestamp: Date.now(),
+    qKey: qId(question),
+  };
+
   return {
     ...state,
     domainStates: { ...state.domainStates, [domain]: ds },
     questionsSeen: newSeen,
     totalQuestions: state.totalQuestions + 1,
+    sessionHistory: [...(state.sessionHistory || []), histEntry],
+  };
+}
+
+function skipQuestionState(state, questionData) {
+  if (!questionData) return state;
+  const { domain, difficulty, question } = questionData;
+  const histEntry = {
+    domain,
+    difficulty,
+    questionText: question[2],
+    options: question[3],
+    correctIndex: question[4],
+    selectedIndex: null,
+    correct: null,
+    skipped: true,
+    timestamp: Date.now(),
+    qKey: qId(question),
+  };
+  return {
+    ...state,
+    sessionHistory: [...(state.sessionHistory || []), histEntry],
   };
 }
 
@@ -536,7 +630,135 @@ function computeOverallProfile(state) {
 const DIFF_LABELS = { 1: "Foundational", 2: "Intermediate", 3: "Proficient", 4: "Advanced", 5: "Expert" };
 const DIFF_COLORS = { 1: "#22c55e", 2: "#84cc16", 3: "#eab308", 4: "#f97316", 5: "#ef4444" };
 
-function DomainCard({ domainKey, domainInfo, domainState, onClick, isSelected }) {
+function abilityScoreColor(ability) {
+  if (ability == null || Number.isNaN(ability)) return "#6b7280";
+  if (ability < 2) return "#dc2626";
+  if (ability < 3) return "#ea580c";
+  if (ability <= 4) return "#ca8a04";
+  return "#16a34a";
+}
+
+function buildRollingAccuracySeries(sessionHistory, windowSize = 10) {
+  const attempts = (sessionHistory || []).filter((h) => !h.skipped && h.correct !== null);
+  const out = [];
+  for (let i = 0; i < attempts.length; i++) {
+    const start = Math.max(0, i - windowSize + 1);
+    const slice = attempts.slice(start, i + 1);
+    const correct = slice.filter((h) => h.correct).length;
+    out.push({
+      index: i + 1,
+      accuracyPct: Math.round((correct / slice.length) * 100),
+      window: slice.length,
+    });
+  }
+  return out;
+}
+
+function generateReadableSummary(state) {
+  const lines = [];
+  lines.push("1PWR Leadership Assessment — Session summary");
+  lines.push(`Exported: ${new Date().toISOString()}`);
+  lines.push(`Questions answered: ${state.totalQuestions}`);
+  const tested = Object.entries(DOMAINS).filter(([k]) => state.domainStates[k].totalAttempted > 0);
+  lines.push(`Domains with data: ${tested.length} / ${Object.keys(DOMAINS).length}`);
+  const profile = computeOverallProfile(state);
+  lines.push("");
+  lines.push("By category (where you have attempts):");
+  Object.entries(CATEGORIES).forEach(([key, cat]) => {
+    const p = profile[key];
+    if (!p || p.total === 0) return;
+    const acc = Math.round((p.correct / p.total) * 100);
+    const avgAb = p.domains ? (p.abilitySum / p.domains).toFixed(2) : "—";
+    lines.push(`  • ${cat.name}: avg ability ~${avgAb}, accuracy ${acc}%, ${p.total} questions, ${p.domains} domains`);
+  });
+  lines.push("");
+  lines.push(`Bookmarked items for review: ${(state.bookmarks || []).length}`);
+  return lines.join("\n");
+}
+
+function generateMarkdownReport(state) {
+  const profile = computeOverallProfile(state);
+  const domainRows = Object.entries(DOMAINS)
+    .filter(([k]) => state.domainStates[k].totalAttempted > 0)
+    .map(([k, d]) => {
+      const ds = state.domainStates[k];
+      const acc = Math.round((ds.totalCorrect / ds.totalAttempted) * 100);
+      return {
+        key: k,
+        name: d.name,
+        ability: ds.estimatedAbility,
+        accuracy: acc,
+        attempted: ds.totalAttempted,
+        correct: ds.totalCorrect,
+      };
+    })
+    .sort((a, b) => (b.ability || 0) - (a.ability || 0));
+
+  const strengths = domainRows.filter((r) => r.ability != null && r.ability > 4 && r.attempted >= 2);
+  const solid = domainRows.filter((r) => r.ability != null && r.ability >= 3 && r.ability <= 4 && r.attempted >= 2);
+  const growth = domainRows.filter((r) => r.ability != null && r.ability < 3 && r.attempted >= 2);
+  const untested = Object.entries(DOMAINS).filter(([k]) => state.domainStates[k].totalAttempted === 0);
+
+  let md = `# 1PWR Leadership Assessment — Markdown report\n\n`;
+  md += `*Generated ${new Date().toISOString()}*\n\n`;
+  md += `## Snapshot\n\n`;
+  md += `- **Questions answered:** ${state.totalQuestions}\n`;
+  md += `- **Domains touched:** ${domainRows.length} / ${Object.keys(DOMAINS).length}\n\n`;
+
+  md += `## Strengths (ability > 4)\n\n`;
+  if (strengths.length === 0) md += `_No domains meet this bar yet — keep practicing._\n\n`;
+  else {
+    strengths.forEach((r) => {
+      md += `- **${r.name}** — estimated ability ${r.ability.toFixed(1)}, ${r.accuracy}% accuracy (${r.correct}/${r.attempted})\n`;
+    });
+    md += `\n`;
+  }
+
+  md += `## Solid range (ability 3–4)\n\n`;
+  if (solid.length === 0) md += `_Limited data in this band._\n\n`;
+  else {
+    solid.forEach((r) => {
+      md += `- **${r.name}** — ${r.ability.toFixed(1)}, ${r.accuracy}%\n`;
+    });
+    md += `\n`;
+  }
+
+  md += `## Growth areas (ability < 3, with enough attempts)\n\n`;
+  if (growth.length === 0) md += `_None flagged yet — need more incorrect streaks or lower difficulty performance._\n\n`;
+  else {
+    growth.forEach((r) => {
+      md += `- **${r.name}** — ${r.ability != null ? r.ability.toFixed(1) : "—"}, ${r.accuracy}% — consider targeted review\n`;
+    });
+    md += `\n`;
+  }
+
+  md += `## Category roll-up\n\n`;
+  md += `| Category | Domains tested | Avg ability | Accuracy | Questions |\n`;
+  md += `| --- | ---: | ---: | ---: | ---: |\n`;
+  Object.entries(CATEGORIES).forEach(([key, cat]) => {
+    const p = profile[key];
+    if (!p || p.total === 0) return;
+    const avgAb = p.domains ? (p.abilitySum / p.domains).toFixed(2) : "—";
+    const acc = Math.round((p.correct / p.total) * 100);
+    md += `| ${cat.name} | ${p.domains} | ${avgAb} | ${acc}% | ${p.total} |\n`;
+  });
+  md += `\n`;
+
+  if (untested.length > 0) {
+    md += `## Not yet tested\n\n`;
+    md += untested.map(([, d]) => `- ${d.name}`).join("\n");
+    md += `\n\n`;
+  }
+
+  if ((state.bookmarks || []).length > 0) {
+    md += `## Flagged for review (bookmarks)\n\n`;
+    md += `_Bookmark keys stored in session state — revisit these topics in a future study pass._\n\n`;
+  }
+
+  return md;
+}
+
+function DomainCard({ domainKey, domainInfo, domainState, onClick, isSelected, isUntested }) {
   const cat = CATEGORIES[domainInfo.cat];
   const pct = domainState.totalAttempted > 0
     ? Math.round((domainState.totalCorrect / domainState.totalAttempted) * 100)
@@ -547,11 +769,15 @@ function DomainCard({ domainKey, domainInfo, domainState, onClick, isSelected })
     <div
       onClick={onClick}
       style={{
-        border: isSelected ? `2px solid ${cat.color}` : "1px solid #e5e7eb",
+        border: isSelected
+          ? `2px solid ${cat.color}`
+          : isUntested
+            ? "2px dashed #f59e0b"
+            : "1px solid #e5e7eb",
         borderRadius: 8,
         padding: "10px 12px",
         cursor: "pointer",
-        background: isSelected ? `${cat.color}11` : domainState.totalAttempted > 0 ? "#fafafa" : "#fff",
+        background: isSelected ? `${cat.color}11` : isUntested ? "#fffbeb" : domainState.totalAttempted > 0 ? "#fafafa" : "#fff",
         transition: "all 0.15s",
         minWidth: 0,
       }}
@@ -580,16 +806,28 @@ function DomainCard({ domainKey, domainInfo, domainState, onClick, isSelected })
         </div>
       )}
       {domainState.totalAttempted === 0 && (
-        <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 4 }}>Not started</div>
+        <div style={{ fontSize: 11, color: isUntested ? "#b45309" : "#9ca3af", marginTop: 4, fontWeight: isUntested ? 600 : 400 }}>
+          {isUntested ? "Untested — tap to start here" : "Not started"}
+        </div>
       )}
     </div>
   );
 }
 
-function QuestionPanel({ questionData, onAnswer, questionNumber }) {
+function QuestionPanel({
+  questionData,
+  onAnswer,
+  onSkip,
+  questionNumber,
+  domainState,
+  totalInDomain,
+  bookmarked,
+  onToggleBookmark,
+}) {
   const [selected, setSelected] = useState(null);
   const [revealed, setRevealed] = useState(false);
   const q = questionData.question;
+  const qKey = qId(q);
 
   const handleSelect = (idx) => {
     if (revealed) return;
@@ -598,36 +836,116 @@ function QuestionPanel({ questionData, onAnswer, questionNumber }) {
   };
 
   const handleNext = () => {
-    onAnswer(selected === q[4]);
+    if (selected === null) return;
+    onAnswer(selected === q[4], selected);
     setSelected(null);
     setRevealed(false);
   };
 
+  const handleSkipClick = () => {
+    if (revealed) return;
+    onSkip();
+  };
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.isContentEditable) return;
+      if (e.key === "s" || e.key === "S") {
+        if (!revealed) {
+          e.preventDefault();
+          onSkip();
+        }
+        return;
+      }
+      if (e.key === "Enter" && revealed && selected !== null) {
+        e.preventDefault();
+        onAnswer(selected === q[4], selected);
+        setSelected(null);
+        setRevealed(false);
+        return;
+      }
+      if (!revealed) {
+        const n = e.key >= "1" && e.key <= "4" ? parseInt(e.key, 10) : null;
+        if (n != null) {
+          e.preventDefault();
+          setSelected(n - 1);
+          setRevealed(true);
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [revealed, selected, q, onSkip, onAnswer]);
+
   const domain = DOMAINS[questionData.domain];
   const cat = CATEGORIES[domain.cat];
+  const answered = domainState?.totalAttempted ?? 0;
+  const pct = totalInDomain > 0 ? Math.min(100, Math.round((answered / totalInDomain) * 100)) : 0;
 
   return (
     <div style={{ maxWidth: 700, margin: "0 auto" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
         <span style={{
           fontSize: 12, fontWeight: 600, color: cat.color,
           background: `${cat.color}15`, padding: "3px 10px", borderRadius: 12,
         }}>
           {domain.icon} {domain.name}
         </span>
-        <span style={{
-          fontSize: 12, fontWeight: 600,
-          color: DIFF_COLORS[questionData.difficulty],
-          background: `${DIFF_COLORS[questionData.difficulty]}15`,
-          padding: "3px 10px", borderRadius: 12,
-        }}>
-          {DIFF_LABELS[questionData.difficulty]} (L{questionData.difficulty})
-        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span style={{
+            fontSize: 12, fontWeight: 600,
+            color: DIFF_COLORS[questionData.difficulty],
+            background: `${DIFF_COLORS[questionData.difficulty]}15`,
+            padding: "3px 10px", borderRadius: 12,
+          }}>
+            {DIFF_LABELS[questionData.difficulty]} (L{questionData.difficulty})
+          </span>
+          <button
+            type="button"
+            onClick={() => onToggleBookmark(qKey)}
+            style={{
+              padding: "4px 10px", borderRadius: 8, border: bookmarked ? `2px solid ${cat.color}` : "1px solid #d1d5db",
+              background: bookmarked ? `${cat.color}18` : "#fff", color: "#374151", fontSize: 12, fontWeight: 600, cursor: "pointer",
+            }}
+            title="Flag for review later"
+          >
+            {bookmarked ? "★ Flagged" : "☆ Flag"}
+          </button>
+          <button
+            type="button"
+            onClick={handleSkipClick}
+            disabled={revealed}
+            style={{
+              padding: "4px 10px", borderRadius: 8, border: "1px solid #d1d5db",
+              background: revealed ? "#f3f4f6" : "#fff", color: revealed ? "#9ca3af" : "#374151", fontSize: 12, fontWeight: 600, cursor: revealed ? "not-allowed" : "pointer",
+            }}
+            title="Next domain, no score (S)"
+          >
+            Skip domain
+          </button>
+        </div>
       </div>
 
-      <div style={{ fontSize: 16, fontWeight: 500, lineHeight: 1.5, marginBottom: 20, color: "#1f2937" }}>
+      <div style={{ marginBottom: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "#6b7280", marginBottom: 4 }}>
+          <span>Progress in this domain</span>
+          <span>{answered} / {totalInDomain} questions seen</span>
+        </div>
+        <div style={{ height: 6, background: "#f3f4f6", borderRadius: 3, overflow: "hidden" }}>
+          <div style={{
+            height: 6, width: `${pct}%`, borderRadius: 3,
+            background: `linear-gradient(90deg, ${cat.color}, ${cat.color}99)`,
+            transition: "width 0.25s",
+          }} />
+        </div>
+      </div>
+
+      <div style={{ fontSize: 16, fontWeight: 500, lineHeight: 1.5, marginBottom: 12, color: "#1f2937" }}>
         <span style={{ color: "#9ca3af", fontSize: 13, marginRight: 8 }}>Q{questionNumber}</span>
         {q[2]}
+      </div>
+      <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 16 }}>
+        Shortcuts: <kbd style={{ padding: "1px 4px", background: "#f3f4f6", borderRadius: 4 }}>1</kbd>–<kbd style={{ padding: "1px 4px", background: "#f3f4f6", borderRadius: 4 }}>4</kbd> choose · <kbd style={{ padding: "1px 4px", background: "#f3f4f6", borderRadius: 4 }}>Enter</kbd> next · <kbd style={{ padding: "1px 4px", background: "#f3f4f6", borderRadius: 4 }}>S</kbd> skip
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -676,6 +994,7 @@ function QuestionPanel({ questionData, onAnswer, questionNumber }) {
             {q[5]}
           </div>
           <button
+            type="button"
             onClick={handleNext}
             style={{
               marginTop: 12, padding: "10px 32px", borderRadius: 8, border: "none",
@@ -691,8 +1010,9 @@ function QuestionPanel({ questionData, onAnswer, questionNumber }) {
   );
 }
 
-function ResultsDashboard({ state }) {
+function ResultsDashboard({ state, detailDomain, onSelectDomain, onCloseDetail }) {
   const profile = computeOverallProfile(state);
+  const rolling = useMemo(() => buildRollingAccuracySeries(state.sessionHistory, 10), [state.sessionHistory]);
 
   const radarData = Object.entries(CATEGORIES).map(([key, cat]) => {
     const p = profile[key];
@@ -704,9 +1024,18 @@ function ResultsDashboard({ state }) {
     };
   }).filter(d => d.ability > 0);
 
+  const categoryTableRows = Object.entries(CATEGORIES).map(([key, cat]) => {
+    const p = profile[key];
+    if (!p || p.total === 0) return null;
+    const avgAbility = p.domains ? p.abilitySum / p.domains : null;
+    const accPct = Math.round((p.correct / p.total) * 100);
+    return { key, cat, p, avgAbility, accPct };
+  }).filter(Boolean);
+
   const domainBars = Object.entries(DOMAINS)
     .filter(([k]) => state.domainStates[k].totalAttempted > 0)
     .map(([k, d]) => ({
+      key: k,
       name: d.name,
       ability: state.domainStates[k].estimatedAbility || 0,
       accuracy: Math.round((state.domainStates[k].totalCorrect / state.domainStates[k].totalAttempted) * 100),
@@ -719,16 +1048,134 @@ function ResultsDashboard({ state }) {
   const weaknesses = domainBars.filter(d => d.ability < 2.5 && d.attempted >= 2);
   const untested = Object.entries(DOMAINS).filter(([k]) => state.domainStates[k].totalAttempted === 0);
 
+  const sessionDetail = detailDomain
+    ? (state.sessionHistory || []).filter((h) => h.domain === detailDomain)
+    : [];
+
   return (
-    <div style={{ maxWidth: 800, margin: "0 auto" }}>
+    <div style={{ maxWidth: 900, margin: "0 auto" }}>
       <h2 style={{ fontSize: 20, fontWeight: 700, color: "#1f2937", marginBottom: 4 }}>Assessment Profile</h2>
       <p style={{ fontSize: 13, color: "#6b7280", marginBottom: 24 }}>
         {state.totalQuestions} questions answered across {domainBars.length} domains
       </p>
 
+      {detailDomain && DOMAINS[detailDomain] && (
+        <div style={{
+          marginBottom: 24, padding: 16, borderRadius: 10,
+          border: `2px solid ${CATEGORIES[DOMAINS[detailDomain].cat]?.color || "#e5e7eb"}`,
+          background: "#fafafa",
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+            <h3 style={{ fontSize: 16, fontWeight: 600, color: "#111827", margin: 0 }}>
+              {DOMAINS[detailDomain].icon} {DOMAINS[detailDomain].name} — question history
+            </h3>
+            <button
+              type="button"
+              onClick={onCloseDetail}
+              style={{
+                padding: "6px 14px", borderRadius: 6, border: "1px solid #d1d5db",
+                background: "#fff", color: "#374151", fontSize: 13, cursor: "pointer",
+              }}
+            >
+              Close detail
+            </button>
+          </div>
+          {sessionDetail.length === 0 ? (
+            <p style={{ fontSize: 13, color: "#6b7280" }}>No questions in this session for this domain yet.</p>
+          ) : (
+            <div style={{ maxHeight: 320, overflowY: "auto" }}>
+              <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ textAlign: "left", color: "#6b7280", borderBottom: "1px solid #e5e7eb" }}>
+                    <th style={{ padding: "8px 6px" }}>#</th>
+                    <th style={{ padding: "8px 6px" }}>L</th>
+                    <th style={{ padding: "8px 6px" }}>Result</th>
+                    <th style={{ padding: "8px 6px" }}>Your answer</th>
+                    <th style={{ padding: "8px 6px" }}>Question</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sessionDetail.map((h, i) => (
+                    <tr key={`${h.qKey}-${h.timestamp}-${i}`} style={{ borderBottom: "1px solid #f3f4f6", verticalAlign: "top" }}>
+                      <td style={{ padding: "8px 6px", color: "#9ca3af" }}>{i + 1}</td>
+                      <td style={{ padding: "8px 6px", fontWeight: 600, color: DIFF_COLORS[h.difficulty] }}>{h.difficulty}</td>
+                      <td style={{ padding: "8px 6px" }}>
+                        {h.skipped ? (
+                          <span style={{ color: "#6b7280" }}>Skipped</span>
+                        ) : h.correct ? (
+                          <span style={{ color: "#16a34a", fontWeight: 600 }}>Correct</span>
+                        ) : (
+                          <span style={{ color: "#dc2626", fontWeight: 600 }}>Incorrect</span>
+                        )}
+                      </td>
+                      <td style={{ padding: "8px 6px", color: "#374151" }}>
+                        {h.skipped ? "—" : h.selectedIndex != null && h.options?.[h.selectedIndex] != null
+                          ? `${String.fromCharCode(65 + h.selectedIndex)}. ${h.options[h.selectedIndex]}`
+                          : "—"}
+                      </td>
+                      <td style={{ padding: "8px 6px", color: "#374151", lineHeight: 1.4 }}>{h.questionText}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {rolling.length > 0 && (
+        <div style={{ marginBottom: 32 }}>
+          <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 8, color: "#374151" }}>Accuracy trend (rolling 10 answers)</h3>
+          <p style={{ fontSize: 12, color: "#6b7280", marginBottom: 12 }}>
+            Each point is accuracy over the last up to 10 scored questions in this session (skips excluded).
+          </p>
+          <ResponsiveContainer width="100%" height={220}>
+            <LineChart data={rolling} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+              <XAxis dataKey="index" tick={{ fontSize: 11 }} label={{ value: "Answer #", position: "insideBottom", offset: -4, fontSize: 11 }} />
+              <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} tickFormatter={(v) => `${v}%`} />
+              <Tooltip formatter={(v) => [`${v}%`, "Accuracy"]} labelFormatter={(l) => `After answer ${l}`} contentStyle={{ fontSize: 12 }} />
+              <Line type="monotone" dataKey="accuracyPct" name="Accuracy %" stroke="#2563eb" strokeWidth={2} dot={{ r: 3 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {categoryTableRows.length > 0 && (
+        <div style={{ marginBottom: 32 }}>
+          <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12, color: "#374151" }}>Category summary</h3>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", fontSize: 13, borderCollapse: "collapse", minWidth: 520 }}>
+              <thead>
+                <tr style={{ textAlign: "left", color: "#6b7280", borderBottom: "2px solid #e5e7eb" }}>
+                  <th style={{ padding: "10px 8px" }}>Category</th>
+                  <th style={{ padding: "10px 8px" }}>Domains tested</th>
+                  <th style={{ padding: "10px 8px" }}>Avg ability</th>
+                  <th style={{ padding: "10px 8px" }}>Accuracy %</th>
+                  <th style={{ padding: "10px 8px" }}>Questions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {categoryTableRows.map(({ key, cat, p, avgAbility, accPct }) => (
+                  <tr key={key} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                    <td style={{ padding: "10px 8px", fontWeight: 600, color: cat.color }}>{cat.name}</td>
+                    <td style={{ padding: "10px 8px" }}>{p.domains}</td>
+                    <td style={{ padding: "10px 8px", fontWeight: 700, color: abilityScoreColor(avgAbility) }}>
+                      {avgAbility != null ? avgAbility.toFixed(2) : "—"}
+                    </td>
+                    <td style={{ padding: "10px 8px" }}>{accPct}%</td>
+                    <td style={{ padding: "10px 8px" }}>{p.total}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {radarData.length >= 3 && (
         <div style={{ marginBottom: 32 }}>
-          <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12, color: "#374151" }}>Category Overview</h3>
+          <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12, color: "#374151" }}>Category overview (radar)</h3>
           <ResponsiveContainer width="100%" height={300}>
             <RadarChart data={radarData}>
               <PolarGrid stroke="#e5e7eb" />
@@ -742,22 +1189,49 @@ function ResultsDashboard({ state }) {
 
       {domainBars.length > 0 && (
         <div style={{ marginBottom: 32 }}>
-          <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12, color: "#374151" }}>Domain Abilities</h3>
+          <h3 style={{ fontSize: 15, fontWeight: 600, marginBottom: 12, color: "#374151" }}>Domain abilities (click a row for detail)</h3>
           <ResponsiveContainer width="100%" height={Math.max(200, domainBars.length * 28)}>
             <BarChart data={domainBars} layout="vertical" margin={{ left: 140, right: 20 }}>
               <XAxis type="number" domain={[0, 5]} tick={{ fontSize: 11 }} />
               <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={130} />
               <Tooltip
-                formatter={(val, name) => [typeof val === 'number' ? val.toFixed(1) : val, name]}
+                formatter={(val, name) => [typeof val === "number" ? val.toFixed(1) : val, name]}
                 contentStyle={{ fontSize: 12 }}
               />
               <Bar dataKey="ability" radius={[0, 4, 4, 0]}>
                 {domainBars.map((entry, i) => (
-                  <Cell key={i} fill={CATEGORIES[entry.cat]?.color || "#888"} />
+                  <Cell
+                    key={i}
+                    fill={abilityScoreColor(entry.ability)}
+                    style={{ cursor: "pointer" }}
+                    onClick={() => onSelectDomain(entry.key)}
+                  />
                 ))}
               </Bar>
             </BarChart>
           </ResponsiveContainer>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 10 }}>
+            {domainBars.map((entry) => (
+              <button
+                key={entry.key}
+                type="button"
+                onClick={() => onSelectDomain(detailDomain === entry.key ? null : entry.key)}
+                style={{
+                  padding: "4px 10px", borderRadius: 8, fontSize: 11, cursor: "pointer",
+                  border: detailDomain === entry.key ? `2px solid ${abilityScoreColor(entry.ability)}` : "1px solid #e5e7eb",
+                  background: detailDomain === entry.key ? "#f9fafb" : "#fff", color: "#374151",
+                }}
+              >
+                {entry.name}
+              </button>
+            ))}
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 12, fontSize: 11, color: "#6b7280" }}>
+            <span><span style={{ color: "#dc2626", fontWeight: 700 }}>■</span> ability &lt; 2</span>
+            <span><span style={{ color: "#ea580c", fontWeight: 700 }}>■</span> 2–3</span>
+            <span><span style={{ color: "#ca8a04", fontWeight: 700 }}>■</span> 3–4</span>
+            <span><span style={{ color: "#16a34a", fontWeight: 700 }}>■</span> &gt; 4</span>
+          </div>
         </div>
       )}
 
@@ -768,7 +1242,7 @@ function ResultsDashboard({ state }) {
             <p style={{ fontSize: 12, color: "#6b7280" }}>Need more data</p>
           ) : strengths.map(s => (
             <div key={s.name} style={{ fontSize: 12, color: "#374151", marginBottom: 4 }}>
-              {s.name}: <strong>{s.ability.toFixed(1)}</strong> ({s.accuracy}% accuracy)
+              {s.name}: <strong style={{ color: abilityScoreColor(s.ability) }}>{s.ability.toFixed(1)}</strong> ({s.accuracy}% accuracy)
             </div>
           ))}
         </div>
@@ -778,7 +1252,7 @@ function ResultsDashboard({ state }) {
             <p style={{ fontSize: 12, color: "#6b7280" }}>Need more data</p>
           ) : weaknesses.map(s => (
             <div key={s.name} style={{ fontSize: 12, color: "#374151", marginBottom: 4 }}>
-              {s.name}: <strong>{s.ability.toFixed(1)}</strong> ({s.accuracy}% accuracy)
+              {s.name}: <strong style={{ color: abilityScoreColor(s.ability) }}>{s.ability.toFixed(1)}</strong> ({s.accuracy}% accuracy)
             </div>
           ))}
         </div>
@@ -802,25 +1276,46 @@ function ResultsDashboard({ state }) {
 // MAIN APP
 // ═══════════════════════════════════════════════════════════════
 
+function normalizeImportedState(data) {
+  const out = { ...data };
+  delete out.summaryText;
+  delete out.markdownReport;
+  out.questionsSeen = new Set(Array.isArray(data.questionsSeen) ? data.questionsSeen : []);
+  out.sessionHistory = Array.isArray(data.sessionHistory) ? data.sessionHistory : [];
+  out.bookmarks = Array.isArray(data.bookmarks) ? data.bookmarks : [];
+  out.shuffleMode = !!data.shuffleMode;
+  if (typeof out.sessionStartTime !== "number") out.sessionStartTime = Date.now();
+  return out;
+}
+
 export default function App() {
   const [state, setState] = useState(createInitialState);
   const [currentQuestion, setCurrentQuestion] = useState(null);
   const [view, setView] = useState("home"); // home, test, results, domain
   const [selectedDomain, setSelectedDomain] = useState(null);
   const [filterCategory, setFilterCategory] = useState(null);
+  const [resultsDetailDomain, setResultsDetailDomain] = useState(null);
+  const [elapsedSec, setElapsedSec] = useState(0);
+
+  useEffect(() => {
+    const t = setInterval(() => {
+      setElapsedSec(Math.floor((Date.now() - state.sessionStartTime) / 1000));
+    }, 1000);
+    return () => clearInterval(t);
+  }, [state.sessionStartTime]);
 
   const startQuestion = useCallback((domain = null) => {
-    const next = selectNextQuestion(state, domain);
+    const next = selectNextQuestionForState(state, domain);
     if (next) {
       setCurrentQuestion(next);
       setView("test");
     }
   }, [state]);
 
-  const handleAnswer = useCallback((correct) => {
-    const newState = updateState(state, currentQuestion, correct);
+  const handleAnswer = useCallback((correct, selectedIndex = null) => {
+    const newState = updateState(state, currentQuestion, correct, selectedIndex);
     setState(newState);
-    const next = selectNextQuestion(newState, selectedDomain);
+    const next = selectNextQuestionForState(newState, selectedDomain);
     if (next) {
       setCurrentQuestion(next);
     } else {
@@ -829,20 +1324,57 @@ export default function App() {
     }
   }, [state, currentQuestion, selectedDomain]);
 
+  const handleSkip = useCallback(() => {
+    if (!currentQuestion) return;
+    const domain = currentQuestion.domain;
+    const newState = skipQuestionState(state, currentQuestion);
+    setState(newState);
+    const next = selectNextQuestionForState(newState, selectedDomain, selectedDomain ? null : domain);
+    if (next) {
+      setCurrentQuestion(next);
+    } else {
+      setCurrentQuestion(null);
+      setView("results");
+    }
+  }, [state, currentQuestion, selectedDomain]);
+
+  const toggleBookmark = useCallback((qKey) => {
+    setState((prev) => {
+      const list = prev.bookmarks || [];
+      const has = list.includes(qKey);
+      return {
+        ...prev,
+        bookmarks: has ? list.filter((k) => k !== qKey) : [...list, qKey],
+      };
+    });
+  }, []);
+
   const exportState = () => {
     const exportData = {
       ...state,
       questionsSeen: Array.from(state.questionsSeen),
       exportDate: new Date().toISOString(),
-      version: "1.0",
+      version: "1.1",
+      summaryText: generateReadableSummary(state),
+      markdownReport: generateMarkdownReport(state),
     };
-    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `1pwr-assessment-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const summaryTxt = generateReadableSummary(state);
+    const reportMd = generateMarkdownReport(state);
+    const jsonBlob = new Blob([JSON.stringify(exportData, null, 2)], { type: "application/json" });
+    const summaryBlob = new Blob([summaryTxt], { type: "text/plain;charset=utf-8" });
+    const mdBlob = new Blob([reportMd], { type: "text/markdown;charset=utf-8" });
+    const stamp = new Date().toISOString().slice(0, 10);
+    const trigger = (blob, name) => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name;
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+    trigger(jsonBlob, `1pwr-assessment-${stamp}.json`);
+    setTimeout(() => trigger(summaryBlob, `1pwr-assessment-summary-${stamp}.txt`), 200);
+    setTimeout(() => trigger(mdBlob, `1pwr-assessment-report-${stamp}.md`), 400);
   };
 
   const importState = () => {
@@ -856,8 +1388,7 @@ export default function App() {
       reader.onload = (ev) => {
         try {
           const data = JSON.parse(ev.target.result);
-          data.questionsSeen = new Set(data.questionsSeen);
-          setState(data);
+          setState(normalizeImportedState(data));
         } catch (err) {
           alert("Invalid file format");
         }
@@ -869,10 +1400,26 @@ export default function App() {
 
   const assessedCount = Object.values(state.domainStates).filter(d => d.totalAttempted > 0).length;
   const totalDomains = Object.keys(DOMAINS).length;
+  const totalQBank = Q.length;
+  const completionPct = totalQBank > 0 ? Math.min(100, Math.round((state.questionsSeen.size / totalQBank) * 100)) : 0;
+  const untestedCount = totalDomains - assessedCount;
+
+  const fmtTime = (s) => {
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    const h = Math.floor(m / 60);
+    const mm = m % 60;
+    if (h > 0) return `${h}h ${mm}m ${sec}s`;
+    return `${m}m ${sec}s`;
+  };
 
   const filteredDomains = filterCategory
     ? Object.entries(DOMAINS).filter(([, d]) => d.cat === filterCategory)
     : Object.entries(DOMAINS);
+
+  const currentQKey = currentQuestion ? qId(currentQuestion.question) : null;
+  const bookmarkedNow = currentQKey && (state.bookmarks || []).includes(currentQKey);
+  const domainTotalForPanel = currentQuestion ? countQuestionsInDomain(currentQuestion.domain) : 0;
 
   return (
     <div style={{ fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", padding: "20px 24px", maxWidth: 900, margin: "0 auto", color: "#1f2937" }}>
@@ -883,19 +1430,19 @@ export default function App() {
             1PWR Leadership Assessment
           </h1>
           <p style={{ fontSize: 13, color: "#6b7280", margin: "4px 0 0" }}>
-            Adaptive baseline • {assessedCount}/{totalDomains} domains • {state.totalQuestions} questions answered
+            Adaptive baseline • {assessedCount}/{totalDomains} domains • {state.totalQuestions} scored • Session {fmtTime(elapsedSec)} • ~{completionPct}% of question bank seen
           </p>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {view !== "home" && (
-            <button onClick={() => { setView("home"); setSelectedDomain(null); }} style={{
+            <button type="button" onClick={() => { setView("home"); setSelectedDomain(null); }} style={{
               padding: "7px 16px", borderRadius: 6, border: "1px solid #d1d5db",
               background: "#fff", color: "#374151", fontSize: 13, cursor: "pointer",
             }}>
               ← Dashboard
             </button>
           )}
-          <button onClick={() => setView("results")} style={{
+          <button type="button" onClick={() => { setView("results"); setResultsDetailDomain(null); }} style={{
             padding: "7px 16px", borderRadius: 6, border: "1px solid #d1d5db",
             background: view === "results" ? "#2563eb" : "#fff",
             color: view === "results" ? "#fff" : "#374151",
@@ -903,13 +1450,13 @@ export default function App() {
           }}>
             Results
           </button>
-          <button onClick={exportState} style={{
+          <button type="button" onClick={exportState} style={{
             padding: "7px 16px", borderRadius: 6, border: "1px solid #d1d5db",
             background: "#fff", color: "#374151", fontSize: 13, cursor: "pointer",
           }}>
             Export
           </button>
-          <button onClick={importState} style={{
+          <button type="button" onClick={importState} style={{
             padding: "7px 16px", borderRadius: 6, border: "1px solid #d1d5db",
             background: "#fff", color: "#374151", fontSize: 13, cursor: "pointer",
           }}>
@@ -931,19 +1478,32 @@ export default function App() {
         <QuestionPanel
           questionData={currentQuestion}
           onAnswer={handleAnswer}
+          onSkip={handleSkip}
           questionNumber={state.totalQuestions + 1}
+          domainState={state.domainStates[currentQuestion.domain]}
+          totalInDomain={domainTotalForPanel}
+          bookmarked={bookmarkedNow}
+          onToggleBookmark={toggleBookmark}
         />
       )}
 
       {/* RESULTS VIEW */}
-      {view === "results" && <ResultsDashboard state={state} />}
+      {view === "results" && (
+        <ResultsDashboard
+          state={state}
+          detailDomain={resultsDetailDomain}
+          onSelectDomain={(k) => setResultsDetailDomain((prev) => (prev === k ? null : k))}
+          onCloseDetail={() => setResultsDetailDomain(null)}
+        />
+      )}
 
       {/* HOME / DOMAIN SELECTION VIEW */}
       {view === "home" && (
         <>
           {/* Quick start buttons */}
-          <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap", alignItems: "center" }}>
             <button
+              type="button"
               onClick={() => { setSelectedDomain(null); startQuestion(null); }}
               style={{
                 padding: "10px 20px", borderRadius: 8, border: "none",
@@ -953,8 +1513,43 @@ export default function App() {
             >
               ▶ Start Assessment (Auto-select)
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                setState((prev) => ({ ...prev, shuffleMode: !prev.shuffleMode }));
+              }}
+              style={{
+                padding: "10px 16px", borderRadius: 8,
+                border: state.shuffleMode ? "2px solid #7c3aed" : "1px solid #d1d5db",
+                background: state.shuffleMode ? "#f5f3ff" : "#fff",
+                color: state.shuffleMode ? "#5b21b6" : "#374151",
+                fontSize: 14, fontWeight: 600, cursor: "pointer",
+              }}
+              title="When on, auto mode picks domains randomly with extra weight on untested and weaker areas"
+            >
+              {state.shuffleMode ? "Shuffle: ON" : "Shuffle: OFF"}
+            </button>
+            {untestedCount > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  const pick = Object.keys(DOMAINS).find((k) => state.domainStates[k].totalAttempted === 0);
+                  if (pick) {
+                    setSelectedDomain(pick);
+                    startQuestion(pick);
+                  }
+                }}
+                style={{
+                  padding: "10px 16px", borderRadius: 8, border: "2px dashed #f59e0b",
+                  background: "#fffbeb", color: "#b45309", fontSize: 14, fontWeight: 600, cursor: "pointer",
+                }}
+              >
+                Quick: untested domain ({untestedCount} left)
+              </button>
+            )}
             {selectedDomain && (
               <button
+                type="button"
                 onClick={() => startQuestion(selectedDomain)}
                 style={{
                   padding: "10px 20px", borderRadius: 8, border: "2px solid #2563eb",
@@ -1008,6 +1603,7 @@ export default function App() {
                 domainInfo={domain}
                 domainState={state.domainStates[key]}
                 isSelected={selectedDomain === key}
+                isUntested={state.domainStates[key].totalAttempted === 0}
                 onClick={() => setSelectedDomain(selectedDomain === key ? null : key)}
               />
             ))}
