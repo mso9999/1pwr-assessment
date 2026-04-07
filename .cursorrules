@@ -1,0 +1,35 @@
+# 1PWR Assessment AI Context Protocol
+
+## At Conversation Start (REQUIRED)
+1. Read CONTEXT.md for project orientation
+2. Read src/App.jsx to understand the current codebase
+
+## Key Rules
+- This is a SINGLE-FILE React app. Everything goes in `src/App.jsx`.
+- No localStorage or sessionStorage — these are blocked in the target environment.
+- Available libraries: React (with hooks), recharts, lodash, lucide-react, d3, Tailwind utility classes.
+- Import style: `import { useState } from "react"` etc.
+- Export: `export default function App()`
+
+## Question Format
+Questions are in the `Q` array as tuples:
+```
+[domainKey, difficulty(1-5), questionText, [4 options], correctIndex(0-3), explanation]
+```
+
+## When Adding Questions
+- Verify factual accuracy — wrong answers in an assessment tool are unacceptable
+- Ensure difficulty genuinely progresses: L1=anyone knows, L5=specialist
+- Distractors must be plausible
+- Every domain needs questions at ALL 5 difficulty levels
+- Minimum 3 questions per difficulty per domain (target: 5)
+- Explanations should teach, not just confirm the answer
+
+## Domains Reference
+See the DOMAINS object. Keys: electrical, solar, battery, minigrid, physics, math, statistics, chemistry, software, data, iot, cloud, projfinance, accounting, strategy, sales, projmgmt, procurement, safety, assetmgmt, governance, legal, ethics, contracts, writing, leadership, negotiation, crosscultural, english, french, sesotho, logic, quantitative, systems, fluid_intel, african_hist, world_hist, economics, environment, literature, music, philosophy, ego, selfcontrol, emotional_iq, cognitive_bias, personality
+
+## Current Priorities
+1. Expand question bank to 500+ questions with even coverage
+2. Fix any factual errors in existing questions
+3. Ensure all 45 domains have questions at all 5 difficulty levels
+4. Improve UI: better results analytics, domain detail views
