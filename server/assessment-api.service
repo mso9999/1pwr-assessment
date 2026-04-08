@@ -1,0 +1,14 @@
+[Unit]
+Description=1PWR Assessment Results API
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/cc-portal/assessment
+ExecStart=/usr/bin/python3 /opt/cc-portal/assessment/server/results_api.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
