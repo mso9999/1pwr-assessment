@@ -22,10 +22,59 @@
   <script crossorigin src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script crossorigin src="https://unpkg.com/recharts@2.12.7/umd/Recharts.js"></script>
   <script crossorigin src="https://unpkg.com/lodash@4/lodash.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 </head>
 <body>
   <div id="root"></div>
   <script type="text/babel">
+
+// ── FIREBASE INIT ──
+firebase.initializeApp({
+  apiKey: "AIzaSyD0tA1fvWs5dCr-7JqJv_bxlay2Bhs72jQ",
+  authDomain: "pr-system-4ea55.firebaseapp.com",
+  projectId: "pr-system-4ea55",
+  storageBucket: "pr-system-4ea55.firebasestorage.app",
+  appId: "1:562987209098:web:2f788d189f1c0867cb3873"
+});
+const firestoreDb = firebase.firestore();
+const SESSION_ID = "session_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
+let syncStatus = "idle"; // idle, syncing, synced, error
+
+async function syncToFirestore(state) {
+  syncStatus = "syncing";
+  try {
+    const domainAbilities = {};
+    let totalCorrect = 0, totalAttempted = 0;
+    Object.entries(state.domainStates || {}).forEach(([k, ds]) => {
+      if (ds.totalAttempted > 0) {
+        domainAbilities[k] = ds.estimatedAbility;
+        totalCorrect += ds.totalCorrect;
+        totalAttempted += ds.totalAttempted;
+      }
+    });
+    await firestoreDb.collection("assessment_results").doc(SESSION_ID).set({
+      sessionId: SESSION_ID,
+      lastUpdated: new Date().toISOString(),
+      totalQuestions: state.totalQuestions || 0,
+      questionsSeen: Array.from(state.questionsSeen || []),
+      contests: state.contests || [],
+      bookmarks: state.bookmarks || [],
+      domainStates: state.domainStates || {},
+      summary: {
+        totalCorrect,
+        totalAttempted,
+        accuracy: totalAttempted > 0 ? +(totalCorrect / totalAttempted * 100).toFixed(1) : 0,
+        domainAbilities
+      }
+    });
+    syncStatus = "synced";
+  } catch (e) {
+    console.warn("Firestore sync failed:", e);
+    syncStatus = "error";
+  }
+}
+
 
 // ═══════════════════════════════════════════════════════════════
 // 1PWR LEADERSHIP ADAPTIVE ASSESSMENT
@@ -1770,6 +1819,7 @@ function App() {
   const handleAnswer = React.useCallback((correct, selectedIndex = null) => {
     const newState = updateState(state, currentQuestion, correct, selectedIndex);
     setState(newState);
+    syncToFirestore(newState);
     const next = selectNextQuestionForState(newState, selectedDomain);
     if (next) {
       setCurrentQuestion(next);
@@ -1805,10 +1855,11 @@ function App() {
   }, []);
 
   const handleContestSubmit = React.useCallback((contest) => {
-    setState((prev) => ({
-      ...prev,
-      contests: [...(prev.contests || []), contest],
-    }));
+    setState((prev) => {
+      const newState = { ...prev, contests: [...(prev.contests || []), contest] };
+      syncToFirestore(newState);
+      return newState;
+    });
   }, []);
 
   const exportState = () => {
@@ -1892,7 +1943,10 @@ function App() {
             1PWR Leadership Assessment
           </h1>
           <p style={{ fontSize: 13, color: "#6b7280", margin: "4px 0 0" }}>
-            Adaptive baseline • {assessedCount}/{totalDomains} domains • {state.totalQuestions} scored • Session {fmtTime(elapsedSec)} • ~{completionPct}% of question bank seen
+            Adaptive baseline • {assessedCount}/{totalDomains} domains • {state.totalQuestions} scored • Session {fmtTime(elapsedSec)} • ~{completionPct}% seen
+            <span style={{ marginLeft: 8, fontSize: 10 }} title={syncStatus === "synced" ? "Results synced to cloud" : syncStatus === "error" ? "Sync error" : "Syncing..."}>
+              {syncStatus === "synced" ? "🟢" : syncStatus === "error" ? "🔴" : syncStatus === "syncing" ? "🟡" : "⚪"}
+            </span>
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -2085,46 +2139,6 @@ function App() {
     </div>
   );
 }
-// ── BACKEND SYNC ──
-const BACKEND_URL = window.location.origin + "/assessment/api";
-
-async function syncToBackend(state, sessionId) {
-  try {
-    const payload = {
-      sessionId,
-      lastUpdated: new Date().toISOString(),
-      totalQuestions: state.totalQuestions,
-      questionsSeen: Array.from(state.questionsSeen || []),
-      contests: state.contests || [],
-      bookmarks: state.bookmarks || [],
-      domainStates: state.domainStates,
-      summary: computeSummary(state)
-    };
-    await fetch(BACKEND_URL + "/save", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    return "synced";
-  } catch (e) {
-    console.warn("Sync failed:", e);
-    return "error";
-  }
-}
-
-function computeSummary(state) {
-  const domainAbilities = {};
-  let totalCorrect = 0, totalAttempted = 0;
-  Object.entries(state.domainStates || {}).forEach(([k, ds]) => {
-    if (ds.totalAttempted > 0) {
-      domainAbilities[k] = ds.estimatedAbility;
-      totalCorrect += ds.totalCorrect;
-      totalAttempted += ds.totalAttempted;
-    }
-  });
-  return { totalCorrect, totalAttempted, accuracy: totalAttempted > 0 ? (totalCorrect/totalAttempted*100).toFixed(1) : 0, domainAbilities };
-}
-
 // Mount the app
 const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(React.createElement(App));
