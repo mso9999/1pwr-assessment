@@ -675,6 +675,7 @@ const Q = [
   ["cognitive_bias", 5, "What is 'base rate neglect'?", ["Ignoring trivia", "Using medians", "Ignoring prior prevalence when evaluating evidence — e.g., rare disease false positives", "Always correct"], 2, "Combine test sensitivity with population base rate via Bayes."],
   ["personality", 5, "Why might high conscientiousness become dysfunctional?", ["It cannot", "It lowers grades", "It prevents ethics", "Over-planning, rigidity, or workaholism — strengths overplayed become bottlenecks"], 3, "Any trait extreme can maladapt — context and flexibility matter."],
   ["selfcontrol", 5, "What is 'urge surfing' in addiction science (adaptable to habits)?", ["Observe urge rise/fall like a wave without acting — reducing automaticity", "Replace with food", "Suppress urges forever", "Punish yourself"], 0, "Mindfulness-based acceptance can decouple urge from behavior."],
+];
 
 // ═══════════════════════════════════════════════════════════════
 // ADAPTIVE ENGINE
