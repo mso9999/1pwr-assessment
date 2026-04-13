@@ -38,6 +38,8 @@ sudo systemctl reload caddy
 ```
 
 ## URLs
-- Assessment: https://cc.1pwrafrica.com/assessment/
+- **Assessment UI:** https://cc.1pwrafrica.com/assessment/
 - Results API: https://cc.1pwrafrica.com/assessment/api/list
 - Session data: https://cc.1pwrafrica.com/assessment/api/session/{sessionId}
+
+To publish the **Vite** build (`npm run build` → `dist/`) instead of `public/index.html`, upload the **contents** of `dist/` to `/opt/cc-portal/assessment/` (same Caddy `try_files` rules apply).

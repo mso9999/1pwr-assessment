@@ -2,6 +2,15 @@
 
 Single-page React assessment (`src/App.jsx`). Run locally or deploy the static build to any host.
 
+## Where is the UI hosted?
+
+| Environment | URL | Notes |
+|-------------|-----|--------|
+| **1PWR production (EC2 + Caddy)** | **https://cc.1pwrafrica.com/assessment/** | Primary cloud UI for the team. Deploy steps: [DEPLOY.md](DEPLOY.md). |
+| **GitHub Pages (optional)** | https://mso9999.github.io/1pwr-assessment/ | Static build from `master` via [Actions](.github/workflows/deploy-github-pages.yml). Requires **Settings → Pages → GitHub Actions** and, if deploy fails, **Settings → Environments → `github-pages` → Deployment branches** — allow **`master`** (or “All branches”), not only `gh-pages`. |
+
+The Vite app in this repo (`npm run build` → `dist/`) is the bundled React assessment. The older single-file build under `public/index.html` may still be used by some deployments; prefer updating EC2 with `dist/` contents if you want the latest Vite build live at `/assessment/`.
+
 ## Local
 
 ```bash
