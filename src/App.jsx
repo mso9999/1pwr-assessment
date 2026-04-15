@@ -1743,6 +1743,20 @@ export default function App() {
     }
   }, [state]);
 
+  // Deep link: open https://…/1pwr-assessment/#start to jump into the first question (skips home grid).
+  useEffect(() => {
+    const tryStartFromHash = () => {
+      const h = (window.location.hash || "").replace(/^#/, "");
+      if (h === "start" || h === "test") {
+        startQuestion(null);
+        window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+      }
+    };
+    tryStartFromHash();
+    window.addEventListener("hashchange", tryStartFromHash);
+    return () => window.removeEventListener("hashchange", tryStartFromHash);
+  }, [startQuestion]);
+
   const handleAnswer = useCallback((correct, selectedIndex = null) => {
     const newState = updateState(state, currentQuestion, correct, selectedIndex);
     setState(newState);
