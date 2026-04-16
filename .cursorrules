@@ -1,8 +1,9 @@
 # 1PWR Assessment AI Context Protocol
 
 ## At Conversation Start (REQUIRED)
-1. Read CONTEXT.md for project orientation
-2. Read src/App.jsx to understand the current codebase
+1. Read **CONTEXT.md** — especially **User-stated intent** (authoritative), **Intent (living)**, **Current State** (single source of truth; no separate intent doc)
+2. Skim **recent entries** in `SESSION_LOG.md` if the task depends on prior session decisions
+3. Read `src/App.jsx` to understand the current codebase
 
 ## Key Rules
 - This is a SINGLE-FILE React app. Everything goes in `src/App.jsx`.
@@ -29,7 +30,16 @@ Questions are in the `Q` array as tuples:
 See the DOMAINS object. Keys: electrical, solar, battery, minigrid, physics, math, statistics, chemistry, software, data, iot, cloud, projfinance, accounting, strategy, sales, projmgmt, procurement, safety, assetmgmt, governance, legal, ethics, contracts, writing, leadership, negotiation, crosscultural, english, french, sesotho, logic, quantitative, systems, fluid_intel, african_hist, world_hist, economics, environment, literature, music, philosophy, ego, selfcontrol, emotional_iq, cognitive_bias, personality
 
 ## Current Priorities
+(Sync with CONTEXT.md **Current State** / **Intent** when they diverge.)
+
 1. Expand question bank to 500+ questions with even coverage
 2. Fix any factual errors in existing questions
 3. Ensure all 45 domains have questions at all 5 difficulty levels
 4. Improve UI: better results analytics, domain detail views
+
+## When Priorities or Intent Change
+Update **CONTEXT.md** (Purpose, Intent, or Current State) in the same PR as substantive work when possible. Do not add a separate intent-only file.
+
+## After Substantive Work or Session End (REQUIRED when applicable)
+1. **Append `SESSION_LOG.md`**: session id or date, focus, changes, decisions worth remembering.
+2. If priorities or goals **shifted** or were **clarified**, **update `CONTEXT.md`** using the new log entry as **reference**—so the next session opens with accurate intent (chat alone is not durable).
