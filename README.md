@@ -11,6 +11,16 @@ Single-page React assessment (`src/App.jsx`). Run locally or deploy the static b
 
 The Vite app in this repo (`npm run build` → `dist/`) is the bundled React assessment. The older single-file build under `public/index.html` may still be used by some deployments; prefer updating EC2 with `dist/` contents if you want the latest Vite build live at `/assessment/`.
 
+## Question bank quality (POE)
+
+Scenario items are vulnerable to **pattern matching** (e.g. longest option) if distractors are weak. The app **shuffles** options at display time; item authors should still keep distractors **plausible** and **similar length** where possible. Run:
+
+```bash
+npm run audit:questions
+```
+
+to list rows where the keyed answer is still much longer than alternatives (review queue).
+
 ## Local
 
 ```bash
