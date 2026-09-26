@@ -1,0 +1,26 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Personal assessment results: one doc per browser session, owned by anonymous auth UID.
+    match /assessment_results/{sessionId} {
+      function validPayload() {
+        return request.resource.data.keys().hasAll(['sessionId', 'ownerUid', 'lastUpdated'])
+          && request.resource.data.sessionId == sessionId
+          && request.resource.data.ownerUid == request.auth.uid
+          && request.resource.size() < 500000;
+      }
+
+      allow create: if request.auth != null && validPayload();
+      allow update: if request.auth != null
+        && resource.data.ownerUid == request.auth.uid
+        && validPayload();
+      allow read: if request.auth != null && resource.data.ownerUid == request.auth.uid;
+      allow delete: if false;
+      allow list: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

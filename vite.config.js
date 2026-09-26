@@ -1,8 +1,9 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// Relative base so static hosting works on GitHub Pages project URLs and elsewhere.
+// GitHub Pages project site: https://<user>.github.io/1pwr-assessment/
+// Override with VITE_BASE_PATH for other hosts (e.g. "./" or "/assessment/").
 export default defineConfig({
   plugins: [react()],
-  base: "./",
+  base: process.env.VITE_BASE_PATH || "/1pwr-assessment/",
 });

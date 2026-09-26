@@ -6,10 +6,10 @@ Single-page React assessment (`src/App.jsx`). Run locally or deploy the static b
 
 | Environment | URL | Notes |
 |-------------|-----|--------|
-| **1PWR production (EC2 + Caddy)** | **https://cc.1pwrafrica.com/assessment/** | Primary cloud UI for the team. Deploy steps: [DEPLOY.md](DEPLOY.md). |
-| **GitHub Pages** | https://mso9999.github.io/1pwr-assessment/ | Serves the **`gh-pages`** branch (Vite `dist/`). The home screen is the domain grid (“dashboard”); use **`#start`** to open the first question: https://mso9999.github.io/1pwr-assessment/#start — Redeploy with `npm run deploy:gh-pages` after changes. |
+| **GitHub Pages** | **https://mso9999.github.io/1pwr-assessment/** | Primary URL for Matt. Vite build on **`gh-pages`** or via GitHub Actions. Use **`#start`** for first question. See [DEPLOY.md](DEPLOY.md). |
+| EC2 / CC (legacy notes) | — | Not deployed; see [DEPLOY.md](DEPLOY.md) if hosting under 1PWR infra later. |
 
-The Vite app in this repo (`npm run build` → `dist/`) is the bundled React assessment. The older single-file build under `public/index.html` may still be used by some deployments; prefer updating EC2 with `dist/` contents if you want the latest Vite build live at `/assessment/`.
+The app is the Vite bundle (`npm run build` → `dist/`). `public/index.html` is only a deploy pointer—not the runnable app.
 
 ## Question bank quality (POE)
 
