@@ -4,6 +4,17 @@
 
 ---
 
+## Session 20260926 — 2026-09-26
+**Focus**: Fix blank GitHub Pages load; decouple Firebase from procurement project; reliable deploy
+**Root cause (verified)**: `public/index.html` used in-browser Babel + CDN Recharts. Runtime errors: `Cannot read properties of undefined (reading 'oneOfType')` and Babel parse failure at `getAvailableQuestions` → empty `#root`. Live Pages URL already served Vite `dist/` from `gh-pages` (works in headless Chromium); broken HTML remained in repo and misled deploy paths.
+**Changes**:
+- Vite `base: /1pwr-assessment/`; GitHub Actions workflow adds `configure-pages` + optional Firebase build secrets.
+- Replaced monolithic `public/index.html` with deploy pointer; app = Vite only.
+- `src/persistence.js` + `src/firebaseConfig.js`: localStorage default; optional Firebase Anonymous Auth sync; `firestore.rules`, `SETUP_FIREBASE.md`, `.env.example`.
+- Removed all `pr-system-4ea55` credentials from repo.
+- Updated DEPLOY.md, README.md, CONTEXT.md.
+**Matt follow-ups**: Enable Pages → GitHub Actions if not already; merge PR; create dedicated Firebase project + secrets (optional); **remove public write on `assessment_results` in pr-system-4ea55** in procurement Firebase console.
+
 ## Session 202604071800 — 2026-04-07
 **Focus**: Initial project creation
 **Changes**:

@@ -7,7 +7,7 @@
 
 ## Key Rules
 - This is a SINGLE-FILE React app. Everything goes in `src/App.jsx`.
-- No localStorage or sessionStorage — these are blocked in the target environment.
+- No localStorage in Claude artifact targets (blocked there). The **Vite / GitHub Pages** build uses localStorage + optional Firebase (`src/persistence.js`).
 - Available libraries: React (with hooks), recharts, lodash, lucide-react, d3, Tailwind utility classes.
 - Import style: `import { useState } from "react"` etc.
 - Export: `export default function App()`

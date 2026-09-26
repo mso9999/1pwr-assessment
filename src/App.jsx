@@ -1,6 +1,14 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, Cell, LineChart, Line, CartesianGrid } from "recharts";
 import _ from "lodash";
+import { isFirebaseConfigured } from "./firebaseConfig.js";
+import {
+  loadLocalState,
+  saveLocalState,
+  initResultsBackend,
+  syncResultsToBackend,
+  onSyncStatusChange,
+} from "./persistence.js";
 
 // ═══════════════════════════════════════════════════════════════
 // 1PWR LEADERSHIP ADAPTIVE ASSESSMENT
@@ -704,6 +712,25 @@ function createInitialState() {
     contests: [],
     shuffleMode: false,
   };
+}
+
+function hydrateInitialState() {
+  const saved = loadLocalState();
+  if (!saved) return createInitialState();
+  const base = createInitialState();
+  Object.keys(base.domainStates).forEach((d) => {
+    if (saved.domainStates?.[d]) {
+      base.domainStates[d] = { ...base.domainStates[d], ...saved.domainStates[d] };
+    }
+  });
+  base.questionsSeen = saved.questionsSeen instanceof Set ? saved.questionsSeen : new Set();
+  base.totalQuestions = saved.totalQuestions ?? 0;
+  base.sessionStartTime = saved.sessionStartTime ?? Date.now();
+  base.sessionHistory = saved.sessionHistory ?? [];
+  base.bookmarks = saved.bookmarks ?? [];
+  base.contests = saved.contests ?? [];
+  base.shuffleMode = !!saved.shuffleMode;
+  return base;
 }
 
 function getAvailableQuestions(domain, difficulty, seen) {
@@ -1720,13 +1747,30 @@ function normalizeImportedState(data) {
 }
 
 export default function App() {
-  const [state, setState] = useState(createInitialState);
+  const [state, setState] = useState(hydrateInitialState);
   const [currentQuestion, setCurrentQuestion] = useState(null);
   const [view, setView] = useState("home"); // home, test, results, domain
   const [selectedDomain, setSelectedDomain] = useState(null);
   const [filterCategory, setFilterCategory] = useState(null);
   const [resultsDetailDomain, setResultsDetailDomain] = useState(null);
   const [elapsedSec, setElapsedSec] = useState(0);
+  const [syncStatus, setSyncStatus] = useState(isFirebaseConfigured() ? "idle" : "local");
+  const persistTimer = useRef(null);
+
+  useEffect(() => {
+    initResultsBackend();
+    return onSyncStatusChange(setSyncStatus);
+  }, []);
+
+  useEffect(() => {
+    if (persistTimer.current) clearTimeout(persistTimer.current);
+    persistTimer.current = setTimeout(() => {
+      syncResultsToBackend(state);
+    }, 400);
+    return () => {
+      if (persistTimer.current) clearTimeout(persistTimer.current);
+    };
+  }, [state]);
 
   useEffect(() => {
     const t = setInterval(() => {
@@ -1840,7 +1884,10 @@ export default function App() {
       reader.onload = (ev) => {
         try {
           const data = JSON.parse(ev.target.result);
-          setState(normalizeImportedState(data));
+          const merged = normalizeImportedState(data);
+          setState(merged);
+          saveLocalState(merged);
+          syncResultsToBackend(merged);
         } catch (err) {
           alert("Invalid file format");
         }
@@ -1883,6 +1930,10 @@ export default function App() {
           </h1>
           <p style={{ fontSize: 13, color: "#6b7280", margin: "4px 0 0" }}>
             Adaptive baseline • {assessedCount}/{totalDomains} domains • {state.totalQuestions} scored • Session {fmtTime(elapsedSec)} • ~{completionPct}% of question bank seen
+            {syncStatus === "synced" && isFirebaseConfigured() ? " • Cloud saved" : null}
+            {syncStatus === "syncing" ? " • Saving…" : null}
+            {syncStatus === "error" && isFirebaseConfigured() ? " • Cloud save failed (local OK)" : null}
+            {!isFirebaseConfigured() ? " • Saved on this device" : null}
           </p>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

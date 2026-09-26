@@ -24,7 +24,7 @@ A comprehensive adaptive assessment that baselines **Matt’s** (CEO, 1PWR Afric
   - **Update a profile** with appropriate context.
 - Keep this **separate** from the **professional-life knowledge base** maintained in the **Email Overlord** repo (and similar)—**do not conflate** the two; cross-reference only with care.
 
-**Implementation note:** The in-repo app today persists via **in-memory state + JSON export/import** (no `localStorage` in artifact targets). Closing the gap to “always reaches agents” is a **deliberate integration** (e.g. export upload into an agent workflow, or a private backend)—to be designed without publishing raw results broadly.
+**Implementation note:** Hosted builds persist on-device (**localStorage**) and optionally sync to a **Matt-owned Firebase project** (Anonymous Auth + tight rules). Agents can read Firestore or exported JSON. **No** coupling to procurement/CC Firebase (`pr-system-4ea55`). Export/upload remains the bridge where cloud sync is not configured.
 
 ### Granularity of analysis (errors)
 - **Do not lose detail** on what Matt got wrong. Analysis should support building a **theory of error** (why the wrong answer, what misconception or gap) and how instruction might **correct** it—not only a score.
@@ -61,9 +61,9 @@ Single-file React JSX app (`src/App.jsx`) designed to render in Claude's Cowork 
 
 ### Key Constraints
 - **Single file**: Assessment logic and question bank live in one `.jsx` file — no separate data files for `Q`.
-- **No localStorage**: Claude artifacts don't support browser storage APIs. All state is in React `useState`.
+- **Persistence (hosted build)**: GitHub Pages / Vite builds use **localStorage** on the device plus optional **Firebase** (dedicated project—see `SETUP_FIREBASE.md`). Claude artifact targets still avoid storage APIs; use export/import there.
 - **Available libraries**: React, recharts, lodash, lucide-react, d3, Tailwind (utility classes only)
-- **Export/Import**: JSON file download/upload for multi-session persistence (since no localStorage)
+- **Export/Import**: JSON / markdown download; import restores session state
 
 ## Domain Taxonomy (45 domains, 11 categories)
 
@@ -115,12 +115,13 @@ Difficulty levels:
 - **Key interests**: hardware + software integration, energy access, AI-augmented operations
 
 ## Current State
+- **2026-09-26**: **GitHub Pages** fixed for reliable Vite deploy (`/1pwr-assessment/` base, Actions workflow). Removed broken standalone `public/index.html` Babel bundle (root cause of blank page). Results: **localStorage** by default; optional dedicated Firebase (see `SETUP_FIREBASE.md`); **pr-system-4ea55** removed from app.
 - **2026-04-15**: **User-stated intent** captured in full (closed loop assess→learn→retest; agent-only; separation from Email Overlord KB; rich error analysis; wide terrain, CEO-relevant depth).
 - **2026-04-15 (POE pass)**: Rewrote **distractors** on many scenario-style items so wrong answers are **plausible, similar length** to the key (reduces “longest = correct” and cartoon-wrong options). Ongoing: run `npm run audit:questions` and fix remaining high-gap rows. Runtime **shuffle** remains essential.
 - Question bank: large and growing; target even coverage across domains and levels.
 - NEED: Expand/polish **question bank** where coverage is thin; **factual** accuracy.
 - NEED: **UI** for longitudinal view (retesting, progress over time) aligned with intent.
-- NEED: **Integration path** from browser/export to **agent analysis** and **personal KB** (explicit design—no accidental public leakage).
+- NEED: **Agent pipeline** to pull Firestore or exports into personal KB (explicit design—no accidental public leakage).
 
 ## Quality Standards for Questions
 - Questions must be factually accurate
